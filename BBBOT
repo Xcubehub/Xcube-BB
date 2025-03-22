@@ -1,0 +1,418 @@
+------------------------------------------------------
+-- Advanced Bot with Admin GUI & Command System
+-- No hashtags in chat messages.
+-- Commands:
+-- Basic (cmds1): ;status, ;shutdown, ;fix, ;goto [player], ;say (text), ;reset, ;jump, ;follow [player], ;unfollow, ;spin [speed], ;unspin, ;dance [number], ;undance, ;copychat [user], ;uncopychat
+-- Advanced (cmds2): ;climb [player], ;unclimb, ;tpose, ;sit, ;stand, ;wave, ;point [direction], ;circle [speed] [user], ;uncircle
+------------------------------------------------------
+
+-- CONFIGURATION
+local prefix = ";"  -- Commands must begin with this character
+
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextChatService = game:GetService("TextChatService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local function getCharacter()
+    return player.Character or player.CharacterAdded:Wait()
+end
+local character = getCharacter()
+local humanoid = character:FindFirstChildOfClass("Humanoid")
+local root = character:FindFirstChild("HumanoidRootPart")
+
+-- STATE VARIABLES
+local followingTarget = nil
+local spinning = false
+local spinSpeed = 0
+local dancing = false
+local danceTrack = nil
+local circling = false
+local circleSpeed = 0
+local circleTarget = nil
+
+-- ADMIN MANAGEMENT (store by UserId)
+local adminList = {}  -- key: UserId, value: Name
+
+--------------------------------------
+-- ADVANCED ADMIN GUI SECTION
+--------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game.CoreGui
+
+local Frame = Instance.new("Frame", ScreenGui)
+Frame.Size = UDim2.new(0, 300, 0, 250)
+Frame.Position = UDim2.new(0.5, -150, 0.5, -125)
+Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Frame.BorderSizePixel = 0
+
+local Title = Instance.new("TextLabel", Frame)
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+Title.Text = "Admin Manager"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 20
+
+local NameInput = Instance.new("TextBox", Frame)
+NameInput.Size = UDim2.new(1, -20, 0, 30)
+NameInput.Position = UDim2.new(0, 10, 0, 40)
+NameInput.PlaceholderText = "Enter Username..."
+NameInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+NameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+NameInput.Font = Enum.Font.SourceSans
+NameInput.TextSize = 16
+
+local AddAdminButton = Instance.new("TextButton", Frame)
+AddAdminButton.Size = UDim2.new(1, -20, 0, 30)
+AddAdminButton.Position = UDim2.new(0, 10, 0, 80)
+AddAdminButton.Text = "Add Admin"
+AddAdminButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+AddAdminButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+AddAdminButton.Font = Enum.Font.SourceSansBold
+AddAdminButton.TextSize = 16
+
+local AdminListFrame = Instance.new("ScrollingFrame", Frame)
+AdminListFrame.Size = UDim2.new(1, -20, 0, 80)
+AdminListFrame.Position = UDim2.new(0, 10, 0, 120)
+AdminListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+AdminListFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+AdminListFrame.ScrollBarThickness = 5
+
+local RemoveAllButton = Instance.new("TextButton", Frame)
+RemoveAllButton.Size = UDim2.new(1, -20, 0, 30)
+RemoveAllButton.Position = UDim2.new(0, 10, 0, 210)
+RemoveAllButton.Text = "Remove All Admins"
+RemoveAllButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+RemoveAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+RemoveAllButton.Font = Enum.Font.SourceSansBold
+RemoveAllButton.TextSize = 16
+
+local function UpdateAdminListGUI()
+    for _, child in pairs(AdminListFrame:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+    local count = 0
+    for userId, name in pairs(adminList) do
+        count = count + 1
+        local entryFrame = Instance.new("Frame")
+        entryFrame.Size = UDim2.new(1, -10, 0, 30)
+        entryFrame.Position = UDim2.new(0, 5, 0, (count-1)*35)
+        entryFrame.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        entryFrame.Parent = AdminListFrame
+
+        local nameLabel = Instance.new("TextLabel", entryFrame)
+        nameLabel.Size = UDim2.new(0.7, 0, 1, 0)
+        nameLabel.Position = UDim2.new(0, 0, 0, 0)
+        nameLabel.Text = name
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.Font = Enum.Font.SourceSans
+        nameLabel.TextSize = 14
+        nameLabel.BackgroundTransparency = 1
+
+        local removeButton = Instance.new("TextButton", entryFrame)
+        removeButton.Size = UDim2.new(0.3, -5, 1, 0)
+        removeButton.Position = UDim2.new(0.7, 5, 0, 0)
+        removeButton.Text = "Remove"
+        removeButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+        removeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        removeButton.Font = Enum.Font.SourceSansBold
+        removeButton.TextSize = 14
+
+        removeButton.MouseButton1Click:Connect(function()
+            adminList[userId] = nil
+            UpdateAdminListGUI()
+            BotChatMessage("Removed " .. name .. " from admin list.")
+        end)
+    end
+    AdminListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 35)
+end
+
+AddAdminButton.MouseButton1Click:Connect(function()
+    local enteredName = NameInput.Text
+    if enteredName == "" then
+        StarterGui:SetCore("SendNotification", {Title="Error", Text="No username entered!", Duration=3})
+        return
+    end
+    local target = Players:FindFirstChild(enteredName)
+    if not target then
+        StarterGui:SetCore("SendNotification", {Title="Error", Text="Player not found!", Duration=3})
+        return
+    end
+    adminList[target.UserId] = target.Name
+    UpdateAdminListGUI()
+    BotChatMessage("✅ Added " .. target.Name .. " as an admin!")
+end)
+
+RemoveAllButton.MouseButton1Click:Connect(function()
+    adminList = {}
+    UpdateAdminListGUI()
+    BotChatMessage("🚮 Admin list cleared!")
+end)
+
+------------------------------------------------------
+-- BOT COMMAND SYSTEM (Admins only)
+------------------------------------------------------
+
+-- Chat message function (removes '#' characters)
+local function BotChatMessage(msg)
+    msg = msg:gsub("#", "")
+    local chatEvent = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+    if chatEvent then
+        chatEvent.SayMessageRequest:FireServer(msg, "All")
+    elseif TextChatService and TextChatService.TextChannels then
+        local chatChannel = TextChatService.TextChannels.RBXGeneral
+        if chatChannel then
+            chatChannel:SendAsync(msg)
+        end
+    end
+end
+
+-- Helper: Find a player by name
+local function findPlayer(name)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name:lower():find(name:lower()) or plr.DisplayName:lower():find(name:lower()) then
+            return plr
+        end
+    end
+    return nil
+end
+
+-- Helper: Stop dance animation
+local function stopAnimations()
+    if danceTrack then
+        danceTrack:Stop()
+        danceTrack = nil
+    end
+    dancing = false
+end
+
+-- Helper: Reset bot commands (stops follow, spin, dance, circle)
+local function resetBot()
+    followingTarget = nil
+    spinning = false
+    circling = false
+    circleTarget = nil
+    stopAnimations()
+end
+
+-- Additional state for circle command
+local circling = false
+local circleSpeed = 0
+local circleTarget = nil
+
+-- Command Handler
+local function handleCommand(plr, message)
+    if not message or not message:match("^" .. prefix) then return end
+
+    local args = message:split(" ")
+    local cmd = args[1]:lower():gsub(prefix, "")
+
+    if not (plr and adminList[plr.UserId]) then
+        BotChatMessage("⚠ Error: You are not an admin!")
+        return
+    end
+
+    if cmd == "status" then
+        BotChatMessage("✅ Bot is active and ready!")
+    elseif cmd == "shutdown" then
+        BotChatMessage("Bot shutting down... 3")
+        wait(1)
+        BotChatMessage("2")
+        wait(1)
+        BotChatMessage("1")
+        wait(1)
+        player:Kick("Bot has been shut down.")
+    elseif cmd == "fix" then
+        resetBot()
+        if player.Character then
+            for _, part in pairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Velocity = Vector3.new(0,0,0)
+                    part.RotVelocity = Vector3.new(0,0,0)
+                end
+            end
+        end
+        BotChatMessage("♻ Bot fixed and reset!")
+    elseif cmd == "reset" then
+        resetBot()
+        if player.Character then
+            player.Character:BreakJoints()
+        end
+        BotChatMessage("♻ Bot has been reset!")
+    elseif cmd == "say" and #args > 1 then
+        BotChatMessage(message:sub(#prefix + 5))
+    elseif cmd == "goto" and #args == 2 then
+        local target = findPlayer(args[2])
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            root.CFrame = target.Character.HumanoidRootPart.CFrame
+            BotChatMessage("🚀 Teleported to " .. target.Name .. "!")
+        else
+            BotChatMessage("⚠ Error: Player not found!")
+        end
+    elseif cmd == "jump" then
+        if player.Character and player.Character:FindFirstChild("Humanoid") then
+            player.Character.Humanoid.Jump = true
+            BotChatMessage("🦘 Jumping!")
+        end
+    elseif cmd == "follow" and #args == 2 then
+        local target = findPlayer(args[2])
+        if target then
+            followingTarget = target
+            BotChatMessage("👣 Now following " .. target.Name .. "!")
+        else
+            BotChatMessage("⚠ Error: Player not found!")
+        end
+    elseif cmd == "unfollow" then
+        followingTarget = nil
+        BotChatMessage("🛑 Stopped following!")
+    elseif cmd == "spin" and #args == 2 then
+        local speed = tonumber(args[2])
+        if speed then
+            spinning = true
+            spinSpeed = speed
+            BotChatMessage("🔄 Spinning at speed " .. speed .. "!")
+        else
+            BotChatMessage("⚠ Error: Invalid speed! Use ;spin [number].")
+        end
+    elseif cmd == "unspin" then
+        spinning = false
+        BotChatMessage("🛑 Stopped spinning!")
+    elseif cmd == "dance" and #args == 2 then
+        stopAnimations()
+        local danceNum = tonumber(args[2])
+        if danceNum then
+            local anim = Instance.new("Animation")
+            anim.AnimationId = "rbxassetid://" .. tostring(3189773368 + danceNum)
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                danceTrack = player.Character.Humanoid:LoadAnimation(anim)
+                danceTrack.Looped = true
+                danceTrack:Play()
+                dancing = true
+                BotChatMessage("💃 Dancing style " .. args[2] .. "!")
+            end
+        else
+            BotChatMessage("⚠ Error: Invalid dance number! Use ;dance 1, ;dance 2, or ;dance 3.")
+        end
+    elseif cmd == "undance" then
+        stopAnimations()
+        BotChatMessage("🛑 Stopped dancing!")
+    elseif cmd == "climb" and #args == 2 then
+        local target = findPlayer(args[2])
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            local targetPos = target.Character.HumanoidRootPart.Position
+            local newPos = Vector3.new(root.Position.X, targetPos.Y, root.Position.Z)
+            player.Character.Humanoid:MoveTo(newPos)
+            BotChatMessage("🧗 Climbing towards " .. target.Name .. "!")
+        else
+            BotChatMessage("⚠ Error: Player not found!")
+        end
+    elseif cmd == "unclimb" then
+        BotChatMessage("🧗 Climb command is a one-off action.")
+    elseif cmd == "tpose" then
+        stopAnimations()
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "rbxassetid://507766388"  -- T-pose animation example
+        local track = player.Character.Humanoid:LoadAnimation(anim)
+        track.Looped = true
+        track:Play()
+        BotChatMessage("🖐 T-Pose activated!")
+    elseif cmd == "sit" then
+        if player.Character and player.Character:FindFirstChild("Humanoid") then
+            player.Character.Humanoid.Sit = true
+            BotChatMessage("💺 Sitting!")
+        end
+    elseif cmd == "stand" then
+        if player.Character and player.Character:FindFirstChild("Humanoid") then
+            player.Character.Humanoid.Sit = false
+            BotChatMessage("Standing up!")
+        end
+    elseif cmd == "wave" then
+        stopAnimations()
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "rbxassetid://507770239"  -- Wave animation example
+        local track = player.Character.Humanoid:LoadAnimation(anim)
+        track:Play()
+        BotChatMessage("👋 Waving!")
+    elseif cmd == "point" and #args >= 2 then
+        stopAnimations()
+        local direction = args[2]
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "rbxassetid://507770283"  -- Pointing animation example
+        local track = player.Character.Humanoid:LoadAnimation(anim)
+        track:Play()
+        BotChatMessage("👉 Pointing " .. direction .. "!")
+    elseif cmd == "circle" and #args >= 3 then
+        local speed = tonumber(args[2])
+        local target = findPlayer(args[3])
+        if speed and target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            circling = true
+            circleSpeed = speed
+            circleTarget = target
+            BotChatMessage("🔄 Circling around " .. target.Name .. " at speed " .. speed .. "!")
+        else
+            BotChatMessage("⚠ Error: Invalid parameters for circle!")
+        end
+    elseif cmd == "uncircle" then
+        circling = false
+        circleTarget = nil
+        BotChatMessage("🛑 Stopped circling!")
+    elseif cmd == "cmds1" then
+        BotChatMessage("📜 Commands: ;status, ;shutdown, ;fix, ;goto [plr], ;say (text), ;reset, ;jump, ;follow [player], ;unfollow, ;spin [speed], ;unspin, ;dance [number], ;undance, ;copychat [user], ;uncopychat")
+    elseif cmd == "cmds2" then
+        BotChatMessage("📜 Commands: ;climb [player], ;unclimb, ;tpose, ;sit, ;stand, ;wave, ;point [direction], ;circle [speed] [user], ;uncircle")
+    else
+        BotChatMessage("⚠ Error: Unknown command! Use ;cmds1 & ;cmds2 to see available commands.")
+    end
+end
+
+--------------------------------------------------
+-- EXECUTION LOOP: Follow, Spin & Circle Effects
+--------------------------------------------------
+RunService.RenderStepped:Connect(function()
+    if followingTarget and followingTarget.Character and player.Character then
+        local targetRoot = followingTarget.Character:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            local humanoid = player.Character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid:MoveTo(targetRoot.Position)
+            end
+        end
+    end
+    if spinning and root then
+        root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(spinSpeed), 0)
+    end
+    if circling and circleTarget and circleTarget.Character and player.Character then
+        local targetRoot = circleTarget.Character:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            local angle = tick() * circleSpeed
+            local radius = 5
+            local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+            local targetPos = targetRoot.Position + offset
+            local humanoid = player.Character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid:MoveTo(targetPos)
+            end
+        end
+    end
+end)
+
+--------------------------------------------------
+-- CHAT LISTENER: Process Commands from Chat
+--------------------------------------------------
+Players.PlayerAdded:Connect(function(plr)
+    plr.Chatted:Connect(function(msg)
+        handleCommand(plr, msg)
+    end)
+end)
+for _, plr in ipairs(Players:GetPlayers()) do
+    plr.Chatted:Connect(function(msg)
+        handleCommand(plr, msg)
+    end)
+end
+
+BotChatMessage("🤖 Bot is ready! made by spiritofguesst")
